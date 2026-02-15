@@ -44,20 +44,30 @@ const tabs: TabConfig[] = [
 function buildPrompt(type: ReportType, student: StudentProfile, logs: ActionLog[]): string {
     const sensoryProfile = JSON.stringify(student.sensoryProfile, null, 2);
 
-    // 메모가 있는 기록과 없는 기록을 분리
-    const logsWithMemo = logs.filter(l => l.context && l.context.trim());
-    const logsWithoutMemo = logs.filter(l => !l.context || !l.context.trim());
+    // ===== 개인정보 마스킹 (v1.3): AI에는 이름 대신 'OOO' 전송 =====
+    const maskedName = 'OOO';
 
-    // 교사 메모 섹션 (가장 중요!)
-    const teacherMemos = logsWithMemo.length > 0
-        ? logsWithMemo.map(l =>
-            `- [${l.timestamp.toLocaleString('ko-KR')}] ${l.actionName}\n  교사 메모: "${l.context}"`
-        ).join('\n')
+    // 메모/중재가 있는 기록과 없는 기록 분리
+    const logsWithDetails = logs.filter(l =>
+        (l.context && l.context.trim()) || (l.intervention && l.intervention.trim())
+    );
+    const logsWithoutDetails = logs.filter(l =>
+        (!l.context || !l.context.trim()) && (!l.intervention || !l.intervention.trim())
+    );
+
+    // 교사 메모+중재 섹션 (가장 중요!)
+    const teacherMemos = logsWithDetails.length > 0
+        ? logsWithDetails.map(l => {
+            let entry = `- [${l.timestamp.toLocaleString('ko-KR')}] ${l.actionName}`;
+            if (l.context?.trim()) entry += `\n  선행사건/맥락: "${l.context}"`;
+            if (l.intervention?.trim()) entry += `\n  교사 중재: "${l.intervention}"`;
+            return entry;
+        }).join('\n')
         : '(교사 메모 없음)';
 
     // 메모 없는 기록은 간략히
-    const otherLogs = logsWithoutMemo.length > 0
-        ? logsWithoutMemo.map(l =>
+    const otherLogs = logsWithoutDetails.length > 0
+        ? logsWithoutDetails.map(l =>
             `- [${l.timestamp.toLocaleString('ko-KR')}] ${l.actionName}`
         ).join('\n')
         : '';
@@ -72,9 +82,15 @@ function buildPrompt(type: ReportType, student: StudentProfile, logs: ActionLog[
         .map(([name, count]) => `${name}: ${count}회`)
         .join(', ');
 
+    // 중재 방법 빈도 통계 (v1.3)
+    const interventionLogs = logs.filter(l => l.intervention?.trim());
+    const interventionSummary = interventionLogs.length > 0
+        ? interventionLogs.map(l => l.intervention!.trim()).join(', ')
+        : '(기록된 중재 없음)';
+
     const base = `
 ===== 학생 기본 정보 =====
-학생 이름: ${student.name}
+학생: ${maskedName}
 ${student.grade ? `학년/반: ${student.grade}` : ''}
 ${student.memo ? `학생 특이사항: ${student.memo}` : ''}
 
@@ -84,32 +100,40 @@ ${sensoryProfile}
 ===== 행동 빈도 통계 (총 ${logs.length}건) =====
 ${frequencySummary}
 
-===== ⭐ 교사 직접 메모 (가장 중요한 자료!) =====
-아래는 교사가 행동 관찰 시 직접 작성한 메모입니다. 
-이 메모에는 선행사건(A), 행동 맥락, 교사의 대응, 결과(C) 등이 포함되어 있습니다.
-리포트 작성 시 이 교사 메모의 내용을 가장 중심적으로 반영하세요.
+===== ⭐ 교사 직접 관찰 기록 (가장 중요한 자료!) =====
+아래는 교사가 행동 관찰 시 직접 작성한 메모와 중재 기록입니다.
+[선행사건/맥락]은 행동이 발생한 상황, [교사 중재]는 교사가 어떻게 지도했는지를 나타냅니다.
+리포트 작성 시 이 기록을 가장 중심적으로 반영하세요.
 
 ${teacherMemos}
 
-===== 기타 행동 기록 (메모 없음) =====
+===== 교사 중재 방법 요약 =====
+${interventionSummary}
+
+===== 기타 행동 기록 (상세 메모 없음) =====
 ${otherLogs || '(없음)'}
 `;
 
     switch (type) {
         case 'parent':
             return `당신은 특수교육 전문가 AI 보조 도구입니다.
-아래 학생 데이터를 분석하여 **학부모 상담용 리포트**를 작성하세요.
+아래 학생 데이터를 분석하여 **학부모 소통용 '원팀(One Team)' 리포트**를 작성하세요.
+이 리포트는 가정통신문, 알림장, 카카오톡 등으로 학부모에게 전달되는 용도입니다.
 
 ${base}
 
 작성 지침:
-1. ⭐ 교사 메모의 구체적인 에피소드와 맥락을 최우선으로 반영하세요. 교사가 직접 관찰하고 기록한 내용이므로, 빈도 데이터보다 메모의 질적 내용이 훨씬 중요합니다.
-2. 어조: 정중하고, 공감적이며, 성취 중심으로 서술하세요.
-3. 교사 메모에 기록된 구체적 상황을 인용하며 서술하세요 (예: "수업 중 친구와의 갈등 상황에서도 교사의 중재에 잘 반응하였습니다.").
-4. 감각 프로파일과 행동 간의 상관관계를 분석하되, 교사 메모에서 확인된 실제 패턴을 근거로 제시하세요.
-5. 긍정적인 변화나 성장 가능성을 강조하세요.
-6. 가정에서 실천 가능한 구체적인 감각 통합 전략을 제안하세요.
-7. 출력 언어: 한국어.`;
+1. ⭐ 교사 메모와 중재 기록을 최우선으로 반영하세요. 교사가 어떻게 지도했고, 아이가 어떻게 반응했는지가 핵심입니다.
+2. 어조: 따뜻하고 전문적이며 협력적 권유형으로 작성하세요.
+3. 반드시 아래 4단 구조로 작성하세요:
+
+[오늘의 성장] — 작은 것이라도 칭찬 거리를 먼저 언급하세요.
+[상황 설명] — 문제행동을 건조하게 묘사하되, 그 원인(불편함 등)을 아이 입장에서 해석하세요.
+[교사의 조치] — "제가 학교에서 ~방법으로 지도했더니 아이가 편안해했습니다." 형태로, 교사의 전문성과 신뢰를 보여주세요.
+[가정 연계 요청] — "댁에서도 ~상황이 오면 학교와 똑같이 ~게 반응해 주세요. 일관된 태도가 아이에게 안정감을 줍니다." 형태로 원팀을 강조하세요.
+
+4. 학생 이름은 "${maskedName}" 그대로 사용하세요 (개인정보 보호).
+5. 출력 언어: 한국어.`;
 
         case 'neis':
             return `당신은 특수교육 전문가 AI 보조 도구입니다.
@@ -118,14 +142,15 @@ ${base}
 ${base}
 
 작성 지침:
-1. ⭐ 교사 메모의 내용을 최우선 참고 자료로 활용하세요. 메모에 적힌 선행사건, 행동 맥락, 대응 결과 등을 행정 용어로 변환하여 서술하세요.
-2. 객관적 사실만 건조하게 서술하라.
-3. 주관적 판단(착하다, 나쁘다)을 배제하고 관찰된 행동 위주로 작성하라.
-4. 문장 끝맺음은 '~함', '~임' 또는 평서문으로 통일하라.
-5. 날짜별로 기록을 그룹화하여 작성하라.
-6. 교사 메모의 구체적 에피소드를 행정 문체로 재구성하라.
-7. 예시 형식: "4교시 수학 시간 중 외부 소음으로 인한 감각 과부하로 소리를 지르는 등 불안 행동을 보였으나, 이내 안정을 찾고 착석함."
-8. 출력 언어: 한국어.`;
+1. ⭐ 교사 메모와 중재 기록을 최우선 참고 자료로 활용하세요.
+2. 각 기록을 "일시, 장소(맥락), 행동, 교사 조치, 결과" 순서로 문장화하세요.
+3. 객관적 사실만 건조하게 서술하라. 주관적 판단(착하다, 나쁘다)을 배제.
+4. 문장 끝맺음은 '~함', '~임' 또는 평서문으로 통일.
+5. 날짜별로 기록을 그룹화하여 작성.
+6. 교사의 중재 방법과 그 결과를 반드시 포함.
+7. 예시: "3교시 국어 시간, 과제 수행 중 거부 의사를 표하며 자리를 이탈하였으나, 교사의 언어적 촉구와 시각적 단서 제공을 통해 다시 착석하여 과제를 완수함."
+8. 학생 이름은 "${maskedName}" 그대로 사용 (개인정보 보호).
+9. 출력 언어: 한국어.`;
 
         case 'semester':
             return `당신은 특수교육 전문가 AI 보조 도구입니다.
@@ -134,13 +159,14 @@ ${base}
 ${base}
 
 작성 지침:
-1. ⭐ 교사 메모를 통해 파악할 수 있는 학생의 실제 맥락적 행동 패턴을 가장 중요하게 반영하세요.
-2. 성장 중심으로 서술하세요: 초기 대비 말기의 행동 빈도 변화를 언급하되, 교사 메모에서 확인되는 구체적 변화 사례를 근거로 제시하세요.
-3. 학생의 주된 감각 특성과 강화물(좋아하는 것)을 정의하세요.
-4. 교사 메모에서 확인된 효과적인 중재 전략을 향후 지도 계획에 반영하세요.
-5. 전문적이고 객관적이면서도 발달 가능성에 초점을 맞춰 서술하세요.
-6. 200~400자 내외로 작성하세요.
-7. 출력 언어: 한국어.`;
+1. ⭐ 교사 메모와 중재 기록을 통해 파악할 수 있는 학생의 실제 행동 패턴과 변화를 가장 중요하게 반영하세요.
+2. 성장 중심으로 서술: 초기 대비 말기의 행동 빈도 변화를 언급하되, 교사 메모에서 확인되는 구체적 변화 사례를 근거로 제시.
+3. 한 학기 동안 축적된 '지도 방법'과 '학생의 반응' 데이터를 분석하여 **가장 효과적인 교육적 접근법**을 제안하세요.
+4. 학생의 주된 감각 특성과 강화물(좋아하는 것)을 정의.
+5. 전문적이고 객관적이면서도 발달 가능성에 초점을 맞춰 서술.
+6. 200~400자 내외로 작성.
+7. 학생 이름은 "${maskedName}" 그대로 사용 (개인정보 보호).
+8. 출력 언어: 한국어.`;
     }
 }
 
@@ -169,7 +195,7 @@ export default function Reports() {
     const report = reports[activeTab];
 
     // 메모가 있는 기록 수 계산
-    const memoCount = logs?.filter((l: ActionLog) => l.context && l.context.trim()).length || 0;
+    const memoCount = logs?.filter((l: ActionLog) => (l.context && l.context.trim()) || (l.intervention && l.intervention.trim())).length || 0;
 
     const handleGenerate = async () => {
         if (!logs || !student) return;

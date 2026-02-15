@@ -2,12 +2,14 @@ import { useState } from 'react';
 import { useStudents } from '../hooks/useDb';
 import { db } from '../lib/db';
 import { useNavigate } from 'react-router-dom';
-import { Plus, Trash2, User, X } from 'lucide-react';
+import { Plus, Trash2, User, X, AlertTriangle } from 'lucide-react';
 
 export default function Home() {
     const students = useStudents();
     const navigate = useNavigate();
     const [showForm, setShowForm] = useState(false);
+    const [showResetConfirm, setShowResetConfirm] = useState(false);
+    const [resetInput, setResetInput] = useState('');
     const [name, setName] = useState('');
     const [grade, setGrade] = useState('');
     const [memo, setMemo] = useState('');
@@ -34,6 +36,20 @@ export default function Home() {
         if (confirm(`"${studentName}" 학생 정보를 삭제하시겠습니까?\n관련된 모든 행동 기록도 함께 삭제됩니다.`)) {
             await db.logs.where('studentId').equals(id).delete();
             await db.students.delete(id);
+        }
+    };
+
+    const handleResetAll = async () => {
+        if (resetInput !== '초기화') return;
+        try {
+            await db.delete();
+            setShowResetConfirm(false);
+            setResetInput('');
+            // 페이지 새로고침으로 DB 재생성
+            window.location.reload();
+        } catch (error) {
+            console.error('데이터 초기화 실패:', error);
+            alert('초기화에 실패했습니다. 페이지를 새로고침 후 다시 시도해 주세요.');
         }
     };
 
@@ -212,6 +228,89 @@ export default function Home() {
                                     </div>
                                 </div>
                             ))}
+                        </div>
+                    )}
+
+                    {/* ===== 데이터 초기화 (Danger Zone) ===== */}
+                    <div className="mt-12 border border-red-200 rounded-2xl overflow-hidden">
+                        <div className="bg-red-50 px-6 py-4 border-b border-red-200">
+                            <h3 className="text-sm font-bold text-red-700 flex items-center gap-2">
+                                <AlertTriangle size={16} />
+                                데이터 관리 (업무 인수인계)
+                            </h3>
+                        </div>
+                        <div className="px-6 py-5 bg-white">
+                            <p className="text-sm text-slate-600 mb-1">
+                                이 컴퓨터에 저장된 <strong>모든 학생 정보, 행동 기록, AI 리포트</strong>를 완전히 삭제합니다.
+                            </p>
+                            <p className="text-xs text-slate-400 mb-4">
+                                업무 인수인계 시 개인정보를 안전하게 제거할 때 사용하세요. 삭제된 데이터는 복구할 수 없습니다.
+                            </p>
+                            <button
+                                onClick={() => setShowResetConfirm(true)}
+                                className="px-5 py-2.5 bg-red-600 text-white text-sm font-semibold rounded-xl hover:bg-red-700 transition-colors"
+                            >
+                                🗑️ 전체 데이터 초기화
+                            </button>
+                        </div>
+                    </div>
+
+                    {/* 초기화 확인 모달 */}
+                    {showResetConfirm && (
+                        <div className="fixed inset-0 bg-black/50 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+                            <div className="bg-white rounded-2xl shadow-2xl w-full max-w-sm p-6 relative">
+                                <button onClick={() => { setShowResetConfirm(false); setResetInput(''); }} className="absolute top-4 right-4 text-slate-400 hover:text-slate-600">
+                                    <X size={20} />
+                                </button>
+                                <div className="flex items-center gap-3 mb-4">
+                                    <div className="w-12 h-12 rounded-xl bg-red-100 flex items-center justify-center">
+                                        <AlertTriangle size={24} className="text-red-600" />
+                                    </div>
+                                    <div>
+                                        <h3 className="text-lg font-bold text-red-700">정말 초기화하시겠습니까?</h3>
+                                        <p className="text-xs text-slate-400">이 작업은 되돌릴 수 없습니다</p>
+                                    </div>
+                                </div>
+
+                                <div className="bg-red-50 border border-red-200 rounded-xl p-4 mb-4">
+                                    <p className="text-sm text-red-700 font-medium mb-2">삭제될 데이터:</p>
+                                    <ul className="text-xs text-red-600 space-y-1">
+                                        <li>• 등록된 모든 학생 정보 ({students?.length || 0}명)</li>
+                                        <li>• 모든 행동 관찰 기록</li>
+                                        <li>• 저장된 AI 리포트</li>
+                                        <li>• 행동/중재 프리셋 설정</li>
+                                    </ul>
+                                </div>
+
+                                <div className="mb-4">
+                                    <label className="block text-sm font-medium text-slate-600 mb-1.5">
+                                        확인을 위해 <strong className="text-red-600">"초기화"</strong>를 입력하세요
+                                    </label>
+                                    <input
+                                        type="text"
+                                        value={resetInput}
+                                        onChange={e => setResetInput(e.target.value)}
+                                        placeholder="초기화"
+                                        className="w-full px-4 py-2.5 rounded-xl border border-red-200 focus:border-red-400 focus:ring-2 focus:ring-red-100 outline-none transition-all text-sm"
+                                    />
+                                </div>
+
+                                <div className="flex gap-3">
+                                    <button
+                                        onClick={() => { setShowResetConfirm(false); setResetInput(''); }}
+                                        className="flex-1 py-2.5 text-sm font-medium text-slate-600 bg-slate-100 rounded-xl hover:bg-slate-200 transition-colors"
+                                    >
+                                        취소
+                                    </button>
+                                    <button
+                                        onClick={handleResetAll}
+                                        disabled={resetInput !== '초기화'}
+                                        className="flex-1 py-2.5 text-sm font-bold text-white bg-red-600 rounded-xl hover:bg-red-700 disabled:opacity-40 disabled:cursor-not-allowed transition-all"
+                                    >
+                                        완전 삭제
+                                    </button>
+                                </div>
+                            </div>
                         </div>
                     )}
                 </div>

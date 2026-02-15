@@ -2,7 +2,7 @@ import { useState } from 'react';
 import { ActionBtn } from '../components/ActionBtn';
 import { Navbar } from '../components/Navbar';
 import { useActions, useLogs, useStudent } from '../hooks/useDb';
-import { db, type ActionPreset } from '../lib/db';
+import { db, type ActionPreset, type ActionLog } from '../lib/db';
 import { useParams } from 'react-router-dom';
 import { Plus, Trash2, X, MessageSquare, Calendar, Shield } from 'lucide-react';
 
@@ -31,6 +31,8 @@ export default function Monitor() {
         'bg-teal-500', 'bg-cyan-500',
     ];
 
+    const [editingLogId, setEditingLogId] = useState<number | null>(null);
+
     // 행동 프리셋과 중재 프리셋 분리
     const behaviorActions = actions?.filter((a: ActionPreset) => a.type !== 'intervention') || [];
     const interventionActions = actions?.filter((a: ActionPreset) => a.type === 'intervention') || [];
@@ -47,20 +49,54 @@ export default function Monitor() {
         setMemoText('');
         setInterventionText('');
         setLogDate(toLocalDatetime(new Date()));
+        setEditingLogId(null); // 새 기록 모드
+    };
+
+    const handleLogClick = (log: ActionLog) => {
+        if (editMode) return;
+
+        // 원본 액션 찾기 (색상/타입 유지를 위해) 또는 폴백 생성
+        const originalAction = actions?.find((a: ActionPreset) => a.id === log.actionId);
+        const preset: ActionPreset = originalAction || {
+            id: log.actionId,
+            name: log.actionName,
+            color: 'bg-slate-400',
+            type: 'behavior'
+        };
+
+        setPendingAction(preset);
+        setMemoText(log.context || '');
+        setInterventionText(log.intervention || '');
+        setLogDate(toLocalDatetime(log.timestamp));
+        setEditingLogId(log.id); // 수정 모드 진입
     };
 
     const handleSaveLog = async (skipMemo: boolean) => {
         if (!pendingAction) return;
+
+        const logData = {
+            studentId: sid,
+            actionId: pendingAction.id,
+            actionName: pendingAction.name,
+            timestamp: logDate ? new Date(logDate) : new Date(),
+            context: skipMemo ? '' : memoText.trim(),
+            intervention: skipMemo ? '' : interventionText.trim(),
+        };
+
         try {
-            await db.logs.add({
-                studentId: sid,
-                actionId: pendingAction.id,
-                actionName: pendingAction.name,
-                timestamp: logDate ? new Date(logDate) : new Date(),
-                context: skipMemo ? '' : memoText.trim(),
-                intervention: skipMemo ? '' : interventionText.trim(),
-            });
-            setShowToast(`✔ ${pendingAction.name} 기록됨`);
+            if (editingLogId) {
+                // 수정
+                await db.logs.update(editingLogId, {
+                    timestamp: logData.timestamp,
+                    context: logData.context,
+                    intervention: logData.intervention
+                });
+                setShowToast(`✔수정됨`);
+            } else {
+                // 신규
+                await db.logs.add(logData);
+                setShowToast(`✔ ${pendingAction.name} 기록됨`);
+            }
             setTimeout(() => setShowToast(null), 2000);
         } catch (error) {
             console.error("[기능적행동 평가도구] 행동 기록 실패:", error);
@@ -68,6 +104,7 @@ export default function Monitor() {
         setPendingAction(null);
         setMemoText('');
         setInterventionText('');
+        setEditingLogId(null);
     };
 
     const handleDeleteAction = async (id: number, name: string) => {
@@ -89,7 +126,8 @@ export default function Monitor() {
         setShowAddForm(false);
     };
 
-    const handleDeleteLog = async (id: number) => {
+    const handleDeleteLog = async (e: React.MouseEvent, id: number) => {
+        e.stopPropagation(); // 부모 클릭 방지 (수정 모달 열림 방지)
         if (confirm('이 기록을 삭제하시겠습니까?')) {
             await db.logs.delete(id);
         }
@@ -181,7 +219,7 @@ export default function Monitor() {
                     </button>
                 </div>
 
-                {/* ===== 메모 입력 모달 (v1.3 강화) ===== */}
+                {/* ===== 메모 입력 모달 (v1.3 강화 + 수정 모드) ===== */}
                 {pendingAction && (
                     <div className="fixed inset-0 bg-black/40 backdrop-blur-sm z-50 flex items-center justify-center p-4">
                         <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md p-6 relative max-h-[90vh] overflow-y-auto">
@@ -197,7 +235,10 @@ export default function Monitor() {
                                     }
                                 </div>
                                 <div>
-                                    <h3 className="text-lg font-bold text-slate-800">{pendingAction.name}</h3>
+                                    <h3 className="text-lg font-bold text-slate-800">
+                                        {pendingAction.name}
+                                        {editingLogId && <span className="ml-2 text-xs font-normal text-amber-600 bg-amber-50 px-2 py-0.5 rounded-full">수정 중</span>}
+                                    </h3>
                                     <p className="text-xs text-slate-400">
                                         {pendingAction.type === 'intervention' ? '지도·중재' : '행동 관찰'}
                                     </p>
@@ -273,13 +314,13 @@ export default function Monitor() {
                                         onClick={() => handleSaveLog(true)}
                                         className="flex-1 py-2.5 text-sm font-medium text-slate-600 bg-slate-100 rounded-xl hover:bg-slate-200 transition-colors"
                                     >
-                                        메모 없이 기록
+                                        메모 없이 {editingLogId ? '수정' : '기록'}
                                     </button>
                                     <button
                                         onClick={() => handleSaveLog(false)}
                                         className="flex-1 py-2.5 text-sm font-bold text-white bg-gradient-to-r from-blue-600 to-indigo-600 rounded-xl shadow-md hover:shadow-lg transition-all"
                                     >
-                                        저장하기
+                                        {editingLogId ? '수정 완료' : '저장하기'}
                                     </button>
                                 </div>
                             </div>
@@ -303,8 +344,8 @@ export default function Monitor() {
                                         <button
                                             onClick={() => setNewActionType('behavior')}
                                             className={`flex-1 py-2 text-sm font-medium rounded-xl border-2 transition-all ${newActionType === 'behavior'
-                                                    ? 'border-red-400 bg-red-50 text-red-700'
-                                                    : 'border-slate-200 text-slate-500'
+                                                ? 'border-red-400 bg-red-50 text-red-700'
+                                                : 'border-slate-200 text-slate-500'
                                                 }`}
                                         >
                                             🔴 행동 관찰
@@ -312,8 +353,8 @@ export default function Monitor() {
                                         <button
                                             onClick={() => setNewActionType('intervention')}
                                             className={`flex-1 py-2 text-sm font-medium rounded-xl border-2 transition-all ${newActionType === 'intervention'
-                                                    ? 'border-emerald-400 bg-emerald-50 text-emerald-700'
-                                                    : 'border-slate-200 text-slate-500'
+                                                ? 'border-emerald-400 bg-emerald-50 text-emerald-700'
+                                                : 'border-slate-200 text-slate-500'
                                                 }`}
                                         >
                                             🟢 지도·중재
@@ -359,13 +400,22 @@ export default function Monitor() {
                     <h2 className="text-lg font-semibold text-slate-700 mb-4">최근 기록</h2>
                     <div className="space-y-2">
                         {recentLogs?.slice(0, 15).map((log) => (
-                            <div key={log.id} className="bg-white p-4 rounded-xl shadow-sm border border-slate-100">
+                            <div
+                                key={log.id}
+                                onClick={() => handleLogClick(log)}
+                                className="bg-white p-4 rounded-xl shadow-sm border border-slate-100 hover:border-blue-300 hover:shadow-md transition-all cursor-pointer group"
+                            >
                                 <div className="flex justify-between items-start">
                                     <div className="flex items-start gap-3 flex-1">
-                                        <div className="w-2 h-full min-h-[2rem] rounded-full bg-blue-500 mt-1"></div>
+                                        <div className={`w-2 h-full min-h-[2rem] rounded-full mt-1 ${log.intervention ? 'bg-emerald-500' : 'bg-blue-500'}`}></div>
                                         <div className="flex-1">
                                             <div className="flex items-baseline gap-2">
-                                                <p className="font-semibold text-slate-800">{log.actionName}</p>
+                                                <p className="font-semibold text-slate-800 flex items-center gap-2">
+                                                    {log.actionName}
+                                                    <span className="text-[10px] text-blue-500 bg-blue-50 px-1.5 py-0.5 rounded border border-blue-100 opacity-0 group-hover:opacity-100 transition-opacity">
+                                                        수정하려면 클릭
+                                                    </span>
+                                                </p>
                                                 <p className="text-xs text-slate-400">{log.timestamp.toLocaleString('ko-KR')}</p>
                                             </div>
                                             {log.context && (
@@ -382,7 +432,10 @@ export default function Monitor() {
                                             )}
                                         </div>
                                     </div>
-                                    <button onClick={() => handleDeleteLog(log.id!)} className="text-slate-400 hover:text-red-500 p-2 flex-shrink-0">
+                                    <button
+                                        onClick={(e) => handleDeleteLog(e, log.id!)}
+                                        className="text-slate-400 hover:text-red-500 p-2 flex-shrink-0 hover:bg-red-50 rounded-lg transition-colors"
+                                    >
                                         <Trash2 size={16} />
                                     </button>
                                 </div>

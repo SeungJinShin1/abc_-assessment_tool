@@ -1,4 +1,12 @@
-import type { VercelRequest, VercelResponse } from '@vercel/node';
+import type { IncomingMessage, ServerResponse } from 'http';
+
+type VercelRequest = IncomingMessage & { method?: string; body?: any };
+type VercelResponse = ServerResponse & {
+    status: (code: number) => VercelResponse;
+    json: (data: any) => void;
+    setHeader: (name: string, value: string) => void;
+    end: () => void;
+};
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
     // CORS 헤더 설정

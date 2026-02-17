@@ -10,8 +10,9 @@ type VercelResponse = ServerResponse & {
 
 // 시도할 모델 목록 (우선순위 순서)
 const MODELS = [
-    'gemini-2.0-flash',     // 1순위: 사용자 요청 (3.0 Flash는 아직 없으므로 최신 2.0 Flash 사용)
-    'gemini-1.5-flash'      // 2순위: 비상용 백업
+    'gemini-3-pro-preview', // 1순위: 사용자 강력 요청 (3.0)
+    'gemini-2.0-flash',     // 2순위: 429/503 에러 시 Fallback
+    'gemini-1.5-flash'      // 3순위: 비상용 백업
 ];
 
 async function tryGenerate(apiKey: string, prompt: string, model: string) {

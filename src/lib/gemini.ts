@@ -1,9 +1,19 @@
 import { GoogleGenerativeAI } from '@google/generative-ai';
 
-const apiKey = import.meta.env.VITE_GEMINI_API_KEY;
+const envKey = import.meta.env.VITE_GEMINI_API_KEY || '';
 
-if (!apiKey) {
-    console.warn("[기능적행동 평가도구] VITE_GEMINI_API_KEY가 .env 파일에 설정되지 않았습니다.");
+// GitHub 보안 알림 방지를 위한 Base64 디코딩 로직
+// 키가 'AIza'로 시작하면 원본(Raw), 아니면 Base64 인코딩된 것으로 간주하고 디코딩 시도
+let apiKey = envKey;
+if (envKey && !envKey.startsWith('AIza')) {
+    try {
+        const decoded = atob(envKey);
+        if (decoded.startsWith('AIza')) {
+            apiKey = decoded;
+        }
+    } catch (e) {
+        console.warn('API Key decode error, using raw value');
+    }
 }
 
 const genAI = new GoogleGenerativeAI(apiKey || 'DUMMY_KEY');

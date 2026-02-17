@@ -2,12 +2,14 @@ import { useState } from 'react';
 import { useStudents } from '../hooks/useDb';
 import { db } from '../lib/db';
 import { useNavigate } from 'react-router-dom';
-import { Plus, Trash2, User, X, AlertTriangle } from 'lucide-react';
+import { Plus, Trash2, User, X, AlertTriangle, Pencil } from 'lucide-react';
+import type { StudentProfile } from '../lib/db';
 
 export default function Home() {
     const students = useStudents();
     const navigate = useNavigate();
     const [showForm, setShowForm] = useState(false);
+    const [editingStudent, setEditingStudent] = useState<StudentProfile | null>(null);
     const [showResetConfirm, setShowResetConfirm] = useState(false);
     const [resetInput, setResetInput] = useState('');
     const [name, setName] = useState('');
@@ -17,6 +19,15 @@ export default function Home() {
         visual: 5, auditory: 5, tactile: 5, vestibular: 5, proprioceptive: 5,
     });
 
+    const resetForm = () => {
+        setName('');
+        setGrade('');
+        setMemo('');
+        setSensory({ visual: 5, auditory: 5, tactile: 5, vestibular: 5, proprioceptive: 5 });
+        setEditingStudent(null);
+        setShowForm(false);
+    };
+
     const handleAddStudent = async () => {
         if (!name.trim()) return;
         await db.students.add({
@@ -25,11 +36,28 @@ export default function Home() {
             memo: memo.trim(),
             sensoryProfile: sensory,
         });
-        setName('');
-        setGrade('');
-        setMemo('');
-        setSensory({ visual: 5, auditory: 5, tactile: 5, vestibular: 5, proprioceptive: 5 });
-        setShowForm(false);
+        resetForm();
+    };
+
+    const handleEditStudent = (e: React.MouseEvent, student: StudentProfile) => {
+        e.stopPropagation();
+        setEditingStudent(student);
+        setName(student.name);
+        setGrade(student.grade || '');
+        setMemo(student.memo || '');
+        setSensory(student.sensoryProfile || { visual: 5, auditory: 5, tactile: 5, vestibular: 5, proprioceptive: 5 });
+        setShowForm(true);
+    };
+
+    const handleUpdateStudent = async () => {
+        if (!editingStudent || !name.trim()) return;
+        await db.students.update(editingStudent.id, {
+            name: name.trim(),
+            grade: grade.trim(),
+            memo: memo.trim(),
+            sensoryProfile: sensory,
+        });
+        resetForm();
     };
 
     const handleDeleteStudent = async (id: number, studentName: string) => {
@@ -45,7 +73,6 @@ export default function Home() {
             await db.delete();
             setShowResetConfirm(false);
             setResetInput('');
-            // 페이지 새로고침으로 DB 재생성
             window.location.reload();
         } catch (error) {
             console.error('데이터 초기화 실패:', error);
@@ -81,7 +108,7 @@ export default function Home() {
                     <div className="flex items-center justify-between mb-6">
                         <h2 className="text-lg font-bold text-slate-700">학생 관리</h2>
                         <button
-                            onClick={() => setShowForm(true)}
+                            onClick={() => { resetForm(); setShowForm(true); }}
                             className="flex items-center gap-2 px-4 py-2.5 bg-gradient-to-r from-blue-600 to-indigo-600 text-white text-sm font-semibold rounded-xl shadow-md hover:shadow-lg transition-all active:scale-95"
                         >
                             <Plus size={18} />
@@ -89,14 +116,16 @@ export default function Home() {
                         </button>
                     </div>
 
-                    {/* 학생 추가 폼 (모달) */}
+                    {/* 학생 추가/수정 폼 (모달) */}
                     {showForm && (
                         <div className="fixed inset-0 bg-black/40 backdrop-blur-sm z-50 flex items-center justify-center p-4">
                             <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md p-6 relative animate-in fade-in zoom-in-95">
-                                <button onClick={() => setShowForm(false)} className="absolute top-4 right-4 text-slate-400 hover:text-slate-600">
+                                <button onClick={resetForm} className="absolute top-4 right-4 text-slate-400 hover:text-slate-600">
                                     <X size={20} />
                                 </button>
-                                <h3 className="text-lg font-bold text-slate-800 mb-4">새 학생 등록</h3>
+                                <h3 className="text-lg font-bold text-slate-800 mb-4">
+                                    {editingStudent ? '학생 정보 수정' : '새 학생 등록'}
+                                </h3>
 
                                 <div className="space-y-4">
                                     <div>
@@ -152,11 +181,11 @@ export default function Home() {
                                     </div>
 
                                     <button
-                                        onClick={handleAddStudent}
+                                        onClick={editingStudent ? handleUpdateStudent : handleAddStudent}
                                         disabled={!name.trim()}
                                         className="w-full py-3 bg-gradient-to-r from-blue-600 to-indigo-600 text-white font-bold rounded-xl shadow-md hover:shadow-lg disabled:opacity-40 disabled:cursor-not-allowed transition-all"
                                     >
-                                        등록하기
+                                        {editingStudent ? '수정 완료' : '등록하기'}
                                     </button>
                                 </div>
                             </div>
@@ -178,14 +207,23 @@ export default function Home() {
                                     className="group relative bg-white rounded-2xl shadow-sm border border-slate-100 hover:shadow-lg hover:border-blue-200 transition-all duration-300 cursor-pointer overflow-hidden"
                                     onClick={() => navigate(`/monitor/${student.id}`)}
                                 >
-                                    {/* 삭제 버튼 */}
-                                    <button
-                                        onClick={e => { e.stopPropagation(); handleDeleteStudent(student.id, student.name); }}
-                                        className="absolute top-3 right-3 p-1.5 rounded-lg bg-slate-50 text-slate-400 hover:bg-red-50 hover:text-red-500 transition-all opacity-0 group-hover:opacity-100 z-10"
-                                        title="학생 삭제"
-                                    >
-                                        <Trash2 size={14} />
-                                    </button>
+                                    {/* 수정/삭제 버튼 */}
+                                    <div className="absolute top-3 right-3 flex gap-1 opacity-0 group-hover:opacity-100 transition-all z-10">
+                                        <button
+                                            onClick={e => handleEditStudent(e, student)}
+                                            className="p-1.5 rounded-lg bg-slate-50 text-slate-400 hover:bg-blue-50 hover:text-blue-500 transition-all"
+                                            title="학생 정보 수정"
+                                        >
+                                            <Pencil size={14} />
+                                        </button>
+                                        <button
+                                            onClick={e => { e.stopPropagation(); handleDeleteStudent(student.id, student.name); }}
+                                            className="p-1.5 rounded-lg bg-slate-50 text-slate-400 hover:bg-red-50 hover:text-red-500 transition-all"
+                                            title="학생 삭제"
+                                        >
+                                            <Trash2 size={14} />
+                                        </button>
+                                    </div>
 
                                     {/* 상단 컬러 바 */}
                                     <div className="h-2 bg-gradient-to-r from-blue-500 to-indigo-500"></div>

@@ -24,38 +24,54 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
     const apiKey = process.env.GEMINI_API_KEY;
     if (!apiKey) {
-        return res.status(500).json({ error: 'API key not configured on server' });
+        console.error('GEMINI_API_KEY is not set in environment variables');
+        return res.status(500).json({ error: 'API key not configured on server. Vercel 환경변수에 GEMINI_API_KEY를 설정하세요.' });
     }
 
     try {
-        const { prompt } = req.body;
-        if (!prompt || typeof prompt !== 'string') {
-            return res.status(400).json({ error: 'Invalid prompt' });
+        // Vercel은 JSON body를 자동 파싱하지만, 안전을 위해 체크
+        let body = req.body;
+        if (typeof body === 'string') {
+            try { body = JSON.parse(body); } catch { /* ignore */ }
         }
 
-        const response = await fetch(
-            `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${apiKey}`,
-            {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({
-                    contents: [{ parts: [{ text: prompt }] }],
-                }),
-            }
-        );
+        const prompt = body?.prompt;
+        if (!prompt || typeof prompt !== 'string') {
+            return res.status(400).json({ error: 'Invalid prompt: prompt 필드가 비어있습니다.' });
+        }
+
+        // Gemini API 호출 - gemini-3-pro-preview 모델 사용
+        const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-3-pro-preview:generateContent?key=${apiKey}`;
+
+        const response = await fetch(url, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                contents: [{ parts: [{ text: prompt }] }],
+            }),
+        });
 
         if (!response.ok) {
             const errorData = await response.text();
-            console.error('Gemini API error:', errorData);
-            return res.status(response.status).json({ error: 'AI API request failed', details: errorData });
+            console.error('Gemini API error:', response.status, errorData);
+            return res.status(response.status).json({
+                error: `Gemini API 오류 (${response.status})`,
+                details: errorData
+            });
         }
 
         const data = await response.json();
         const text = data?.candidates?.[0]?.content?.parts?.[0]?.text || '';
+
+        if (!text) {
+            console.error('Empty response from Gemini:', JSON.stringify(data));
+            return res.status(500).json({ error: 'AI가 빈 응답을 반환했습니다.' });
+        }
+
         return res.status(200).json({ text });
     } catch (error: unknown) {
         const errMsg = error instanceof Error ? error.message : String(error);
         console.error('Server error:', errMsg);
-        return res.status(500).json({ error: 'Internal server error' });
+        return res.status(500).json({ error: `서버 내부 오류: ${errMsg}` });
     }
 }

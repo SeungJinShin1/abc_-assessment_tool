@@ -220,8 +220,9 @@ export default function Reports() {
                 content: result,
                 generatedAt: new Date(),
             });
-        } catch {
-            alert("리포트 생성에 실패했습니다. API 키를 확인해 주세요.");
+        } catch (err: unknown) {
+            const msg = err instanceof Error ? err.message : '알 수 없는 오류';
+            alert(`리포트 생성에 실패했습니다.\n${msg}`);
         } finally {
             setLoading(false);
         }

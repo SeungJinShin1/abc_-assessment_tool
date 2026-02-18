@@ -10,7 +10,7 @@ type VercelResponse = ServerResponse & {
 
 // 시도할 모델 목록 (우선순위 순서)
 const MODELS = [
-    'gemini-3-pro-preview', // 1순위: 사용자 강력 요청 (3.0)
+    'gemini-3-flash-preview', // 1순위: 사용자 강력 요청 (3.0)
 ];
 
 async function tryGenerate(apiKey: string, prompt: string, model: string) {

@@ -27,9 +27,9 @@ const tabs: TabConfig[] = [
     },
     {
         id: 'neis',
-        label: 'NEIS 누가기록 및 법적 입증',
+        label: 'NEIS 누가기록',
         icon: <ClipboardList size={18} />,
-        description: 'NEIS 행동특성 누가기록 + 교사 보호를 위한 법적 소명·입증자료를 함께 생성합니다.',
+        description: 'NEIS 행동특성 및 종합적 누가기록을 생성합니다.',
         color: 'from-emerald-600 to-teal-500',
     },
     {

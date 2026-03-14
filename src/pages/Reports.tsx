@@ -290,7 +290,7 @@ const exportToExcel = (logs: ActionLog[], student: StudentProfile | undefined) =
         `"${(l.intervention || '').replace(/"/g, '""')}"`,
         `"${(l.aiComment || '').replace(/"/g, '""')}"`
     ]);
-    const csvContent = "\\uFEFF" + [header, ...rows].map(e => e.join(",")).join("\\n");
+    const csvContent = "\uFEFF" + [header, ...rows].map(e => e.join(",")).join("\n");
     
     const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
     const url = URL.createObjectURL(blob);

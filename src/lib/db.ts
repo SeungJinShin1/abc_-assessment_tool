@@ -8,6 +8,7 @@ export interface ActionLog {
     timestamp: Date;
     context?: string;
     intervention?: string;
+    aiComment?: string; // 추가: 개별 기록별 AI 생성 코멘트
 }
 
 export interface ActionPreset {
@@ -65,6 +66,14 @@ db.version(3).stores({
     students: '++id, name',
     reports: '++id, studentId, reportType, generatedAt',
 });
+
+db.version(4).stores({
+    logs: '++id, studentId, actionId, actionName, timestamp, context, intervention, aiComment',
+    actions: '++id, name, color, type',
+    students: '++id, name',
+    reports: '++id, studentId, reportType, generatedAt',
+});
+
 
 // 기본 행동 프리셋 + 중재 프리셋 자동 생성
 db.on('populate', async () => {

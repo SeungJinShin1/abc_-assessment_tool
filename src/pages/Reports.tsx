@@ -1,10 +1,10 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import { Navbar } from '../components/Navbar';
 import { useLogs, useStudent, useSavedReports } from '../hooks/useDb';
 import { generateReport } from '../lib/gemini';
 import { db } from '../lib/db';
 import { useParams } from 'react-router-dom';
-import { Loader2, Copy, Check, FileText, ClipboardList, GraduationCap } from 'lucide-react';
+import { Loader2, Copy, Check, FileText, ClipboardList, GraduationCap, Download, MessageSquare, Shield, Sparkles } from 'lucide-react';
 import type { ActionLog, StudentProfile } from '../lib/db';
 
 type ReportType = 'parent' | 'neis' | 'semester';
@@ -239,8 +239,68 @@ ${base}
 6. 200~400자 내외로 작성.
 7. 학생 이름은 "${maskedName}" 그대로 사용 (개인정보 보호).
 8. 출력 언어: 한국어.`;
-    }
 }
+}
+
+function buildLogPrompt(student: StudentProfile, log: ActionLog): string {
+    const sensoryProfile = JSON.stringify(student.sensoryProfile, null, 2);
+    const maskedName = 'OOO';
+
+    let entry = `- [${new Date(log.timestamp).toLocaleString('ko-KR')}] ${log.actionName}`;
+    if (log.context?.trim()) entry += `\n  선행사건/맥락: "${log.context}"`;
+    if (log.intervention?.trim()) entry += `\n  교사 중재: "${log.intervention}"`;
+
+    return `당신은 특수교육 전문가 AI 보조 도구입니다.
+아래 학생의 개별 행동 관찰 기록 1건을 분석하여 **교육행정정보시스템(NEIS) '행동특성 및 누가기록'**에 입력할 수 있는 형식으로 변환하고, 이어서 **교사용 법적 소명 및 방어 팁**을 별도로 함께 작성하세요.
+
+===== 학생 기본 정보 =====
+학생: ${maskedName}
+${student.grade ? `학년/반: ${student.grade}` : ''}
+${student.memo ? `학생 특이사항: ${student.memo}` : ''}
+감각 프로파일: ${sensoryProfile}
+
+===== ⭐ 개별 관찰 기록 =====
+${entry}
+
+작성 지침:
+1. 해당 기록 하나에 집중하여 객관적으로 서술하세요.
+2. 각 기록을 "일시, 장소(맥락), 행동, 교사 조치, 결과" 순서로 문장화하세요.
+3. 객관적 사실만 건조하게 서술하라. 주관적 판단을 배제.
+4. 문장 끝맺음은 '~함', '~임' 또는 평서문으로 통일.
+5. 학생 이름은 "${maskedName}" 그대로 사용 (개인정보 보호).
+
+========================================
+⭐ [교사용 법적 소명 및 방어 자료] ⭐
+========================================
+NEIS 입력용 텍스트 작성이 끝난 후, 이어서 특수학급 교사 보호를 위한 방어 자료를 객관적 서술로 작성하세요. (감정적 위로 제외)
+1. 날짜·시간대별 특이사항 부재 입증: 이 관찰 시간 동안 특별한 낙상이나 신체손상, 타해 등이 관찰되지 않았음을 기록.
+2. 보호·감독 의무 이행 입증: 교사의 적절한 중재(타임아웃, 감정카드 제시 등)가 이루어졌음 명시.
+3. 향후 재발 방지 및 증거 확보 팁: 해당 행동이 자주 발생할 경우 권장되는 대비책 조언.
+
+출력 언어: 한국어.
+`;
+}
+
+const exportToExcel = (logs: ActionLog[], student: StudentProfile | undefined) => {
+    const header = ['날짜', '행동 이름', '맥락/선행사건', '중재', 'AI 생성 코멘트'];
+    const rows = logs.map(l => [
+        new Date(l.timestamp).toLocaleString('ko-KR').replace(/,/g, ''),
+        l.actionName,
+        `"${(l.context || '').replace(/"/g, '""')}"`,
+        `"${(l.intervention || '').replace(/"/g, '""')}"`,
+        `"${(l.aiComment || '').replace(/"/g, '""')}"`
+    ]);
+    const csvContent = "\\uFEFF" + [header, ...rows].map(e => e.join(",")).join("\\n");
+    
+    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.setAttribute("href", url);
+    link.setAttribute("download", `${student?.name || '학생'}_NEIS_누가기록.csv`);
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+};
 
 export default function Reports() {
     const { studentId } = useParams();
@@ -252,6 +312,44 @@ export default function Reports() {
     const [reports, setReports] = useState<Record<ReportType, string>>({ parent: '', neis: '', semester: '' });
     const [loading, setLoading] = useState(false);
     const [copied, setCopied] = useState(false);
+
+    // NEIS Tab states
+    const [selectedMonth, setSelectedMonth] = useState<number>(new Date().getMonth() + 1);
+    const [generatingLogId, setGeneratingLogId] = useState<number | null>(null);
+
+    // months available based on logs
+    const availableMonths = useMemo(() => {
+        if (!logs) return [new Date().getMonth() + 1];
+        const m = new Set<number>();
+        logs.forEach(l => m.add(new Date(l.timestamp).getMonth() + 1));
+        return Array.from(m).sort((a,b) => a - b);
+    }, [logs]);
+
+    useEffect(() => {
+        if (availableMonths.length > 0 && !availableMonths.includes(selectedMonth)) {
+            setSelectedMonth(availableMonths[availableMonths.length - 1]);
+        }
+    }, [availableMonths, selectedMonth]);
+
+    const filteredLogs = useMemo(() => {
+        if (!logs) return [];
+        return logs.filter(l => new Date(l.timestamp).getMonth() + 1 === selectedMonth)
+                   .sort((a,b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime());
+    }, [logs, selectedMonth]);
+
+    const handleGenerateForLog = async (log: ActionLog) => {
+        if (!student) return;
+        setGeneratingLogId(log.id);
+        try {
+            const prompt = buildLogPrompt(student, log);
+            const result = await generateReport(prompt);
+            await db.logs.update(log.id, { aiComment: result });
+        } catch(err: any) {
+            alert('AI 생성 중 오류 발생: ' + (err.message || err));
+        } finally {
+            setGeneratingLogId(null);
+        }
+    };
 
     // DB에서 저장된 리포트 로드
     useEffect(() => {
@@ -266,7 +364,6 @@ export default function Reports() {
 
     const report = reports[activeTab];
 
-    // 메모가 있는 기록 수 계산
     const memoCount = logs?.filter((l: ActionLog) => (l.context && l.context.trim()) || (l.intervention && l.intervention.trim())).length || 0;
 
     const handleGenerate = async () => {
@@ -278,7 +375,6 @@ export default function Reports() {
             const result = await generateReport(prompt);
             setReports(prev => ({ ...prev, [activeTab]: result }));
 
-            // DB에 저장 (기존 같은 타입 리포트 삭제 후 새로 저장)
             const existing = await db.reports
                 .where('studentId').equals(sid)
                 .filter(r => r.reportType === activeTab)
@@ -310,11 +406,9 @@ export default function Reports() {
 
     return (
         <div className="min-h-screen bg-slate-50 flex flex-col">
-            {/* 공통 내비게이션 */}
             <Navbar studentId={sid} />
 
             <main className="flex-1 p-6 max-w-4xl mx-auto w-full flex flex-col gap-6">
-                {/* 탭 선택 */}
                 <div className="bg-white rounded-2xl shadow-sm border border-slate-100 overflow-hidden">
                     <div className="flex border-b border-slate-100">
                         {tabs.map(tab => (
@@ -332,33 +426,34 @@ export default function Reports() {
                         ))}
                     </div>
 
-                    <div className="p-6">
-                        <p className="text-sm text-slate-500 mb-4">{currentTab.description}</p>
-                        <div className="flex items-center gap-4 mb-4 text-sm text-slate-400">
-                            <span>📊 행동 기록: {logs?.length || 0}건</span>
-                            <span>📝 메모 포함: {memoCount}건</span>
-                            <span>👤 학생: {student?.name || '...'}</span>
-                        </div>
-
-                        {memoCount === 0 && (logs?.length || 0) > 0 && (
-                            <div className="mb-4 p-3 bg-amber-50 border border-amber-200 rounded-xl text-sm text-amber-700">
-                                💡 교사 메모가 없습니다. 행동 기록 시 메모를 함께 작성하면 훨씬 풍부하고 정확한 리포트를 생성할 수 있습니다.
+                    {activeTab !== 'neis' && (
+                        <div className="p-6">
+                            <p className="text-sm text-slate-500 mb-4">{currentTab.description}</p>
+                            <div className="flex items-center gap-4 mb-4 text-sm text-slate-400">
+                                <span>📊 행동 기록: {logs?.length || 0}건</span>
+                                <span>📝 메모 포함: {memoCount}건</span>
+                                <span>👤 학생: {student?.name || '...'}</span>
                             </div>
-                        )}
 
-                        <button
-                            onClick={handleGenerate}
-                            disabled={loading || !logs?.length}
-                            className={`w-full py-3 bg-gradient-to-r ${currentTab.color} text-white font-bold rounded-xl shadow-md hover:shadow-lg disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2 transition-all`}
-                        >
-                            {loading ? <Loader2 className="animate-spin" size={20} /> : currentTab.icon}
-                            {loading ? "분석 중..." : report ? `${currentTab.label} 다시 생성하기` : `${currentTab.label} 생성하기`}
-                        </button>
-                    </div>
+                            {memoCount === 0 && (logs?.length || 0) > 0 && (
+                                <div className="mb-4 p-3 bg-amber-50 border border-amber-200 rounded-xl text-sm text-amber-700">
+                                    💡 교사 메모가 없습니다. 행동 기록 시 메모를 함께 작성하면 훨씬 풍부하고 정확한 리포트를 생성할 수 있습니다.
+                                </div>
+                            )}
+
+                            <button
+                                onClick={handleGenerate}
+                                disabled={loading || !logs?.length}
+                                className={`w-full py-3 bg-gradient-to-r ${currentTab.color} text-white font-bold rounded-xl shadow-md hover:shadow-lg disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2 transition-all`}
+                            >
+                                {loading ? <Loader2 className="animate-spin" size={20} /> : currentTab.icon}
+                                {loading ? "분석 중..." : report ? `${currentTab.label} 다시 생성하기` : `${currentTab.label} 생성하기`}
+                            </button>
+                        </div>
+                    )}
                 </div>
 
-                {/* 결과 */}
-                {report && (
+                {activeTab !== 'neis' && report && (
                     <div className="bg-white p-6 rounded-2xl shadow-sm border border-slate-100 flex-1">
                         <div className="flex justify-between items-center mb-4 border-b border-slate-50 pb-4">
                             <h3 className="font-bold text-slate-700">생성 결과 — {currentTab.label}</h3>
@@ -369,6 +464,99 @@ export default function Reports() {
                         </div>
                         <div className="prose prose-slate max-w-none whitespace-pre-wrap text-slate-600 leading-relaxed text-sm">
                             {report}
+                        </div>
+                    </div>
+                )}
+
+                {activeTab === 'neis' && (
+                    <div className="bg-white p-6 rounded-2xl shadow-sm border border-slate-100 flex-1 flex flex-col gap-6">
+                        <div className="flex justify-between items-center pb-4 border-b border-slate-50">
+                            <div className="flex gap-2">
+                                {availableMonths.map(m => (
+                                    <button 
+                                        key={m} 
+                                        onClick={() => setSelectedMonth(m)}
+                                        className={`px-4 py-2 text-sm font-bold transition-all ${selectedMonth === m ? 'bg-emerald-600 text-white rounded-xl shadow-sm shadow-emerald-200' : 'bg-slate-50 text-slate-500 hover:bg-slate-100 rounded-lg border border-slate-200 hover:border-slate-300'}`}
+                                    >
+                                        {m}월
+                                    </button>
+                                ))}
+                            </div>
+                            <button onClick={() => exportToExcel(logs || [], student)} className="text-emerald-700 hover:text-emerald-800 font-bold transition-colors flex items-center gap-2 text-sm bg-emerald-50 hover:bg-emerald-100 border border-emerald-200 hover:border-emerald-300 px-4 py-2 rounded-xl shadow-sm">
+                                <Download size={16} className="text-emerald-600" /> Excel 다운로드
+                            </button>
+                        </div>
+                        
+                        <div className="space-y-4">
+                            {filteredLogs.map(log => (
+                                <div key={log.id} className="bg-white p-5 rounded-2xl shadow-sm border border-slate-200 hover:border-emerald-200 transition-colors group">
+                                    <div className="flex items-start gap-4">
+                                        <div className={`w-2 min-h-[4rem] h-full rounded-full mt-1 flex-shrink-0 ${log.intervention ? 'bg-emerald-400' : 'bg-blue-400'}`}></div>
+                                        <div className="flex-1 space-y-3">
+                                            <div className="flex items-baseline justify-between gap-4">
+                                                <div className="flex items-baseline gap-3">
+                                                    <h4 className="font-bold text-slate-800 text-base">{log.actionName}</h4>
+                                                    <span className="text-xs text-slate-400 font-medium bg-slate-50 px-2 py-0.5 rounded-md border border-slate-100">
+                                                        {new Date(log.timestamp).toLocaleString('ko-KR')}
+                                                    </span>
+                                                </div>
+                                            </div>
+                                            
+                                            <div className="space-y-2">
+                                                {log.context && (
+                                                    <div className="flex items-start gap-2 bg-slate-50 p-2.5 rounded-lg border border-slate-100">
+                                                        <MessageSquare size={14} className="text-amber-500 mt-0.5 flex-shrink-0" />
+                                                        <p className="text-sm text-slate-600 leading-relaxed max-w-2xl">{log.context}</p>
+                                                    </div>
+                                                )}
+                                                {log.intervention && (
+                                                    <div className="flex items-start gap-2 bg-emerald-50/50 p-2.5 rounded-lg border border-emerald-100/50">
+                                                        <Shield size={14} className="text-emerald-500 mt-0.5 flex-shrink-0" />
+                                                        <p className="text-sm text-emerald-700 leading-relaxed max-w-2xl">{log.intervention}</p>
+                                                    </div>
+                                                )}
+                                            </div>
+                                            
+                                            <div className="mt-4 pt-4 border-t border-slate-100/80">
+                                                {log.aiComment ? (
+                                                    <div className="bg-gradient-to-br from-emerald-50 to-teal-50 p-5 rounded-xl text-sm text-slate-700 border border-emerald-100/60 relative shadow-sm max-w-none prose prose-slate prose-sm text-left">
+                                                        <div className="flex items-center gap-1.5 text-xs font-bold text-emerald-700 mb-3 uppercase tracking-wide">
+                                                            <Sparkles size={14} className="text-emerald-500" /> AI 누가기록 및 소명 자료
+                                                        </div>
+                                                        <div className="leading-relaxed text-slate-600 whitespace-pre-wrap">
+                                                            {log.aiComment}
+                                                        </div>
+                                                        <button 
+                                                            onClick={() => handleGenerateForLog(log)}
+                                                            className="absolute top-4 right-4 opacity-0 group-hover:opacity-100 transition-opacity text-xs bg-white border border-emerald-200 px-3 py-1.5 rounded-lg text-emerald-600 hover:bg-emerald-50 hover:text-emerald-700 hover:border-emerald-300 font-semibold shadow-sm flex items-center gap-1"
+                                                            disabled={generatingLogId === log.id}
+                                                        >
+                                                            {generatingLogId === log.id ? <Loader2 className="animate-spin" size={12} /> : null}
+                                                            {generatingLogId === log.id ? "생성중..." : "다시 생성"}
+                                                        </button>
+                                                    </div>
+                                                ) : (
+                                                    <button 
+                                                        onClick={() => handleGenerateForLog(log)}
+                                                        disabled={generatingLogId === log.id}
+                                                        className="text-sm font-bold bg-white border-2 border-slate-200 text-slate-500 hover:border-emerald-400 hover:bg-emerald-50 hover:text-emerald-600 px-4 py-2.5 rounded-xl transition-all flex items-center justify-center gap-2 w-full sm:w-auto shadow-sm"
+                                                    >
+                                                        {generatingLogId === log.id ? <Loader2 className="animate-spin text-emerald-500" size={16} /> : <Sparkles size={16} className="text-slate-400" />}
+                                                        {generatingLogId === log.id ? "생성 중..." : "AI 누가기록 생성하기"}
+                                                    </button>
+                                                )}
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
+                            ))}
+                            {filteredLogs.length === 0 && (
+                                <div className="text-center py-16 bg-slate-50/50 rounded-2xl border-2 border-dashed border-slate-200">
+                                    <ClipboardList size={32} className="mx-auto text-slate-300 mb-3" />
+                                    <p className="text-slate-500 font-medium">선택한 달의 행동 기록이 없습니다.</p>
+                                    <p className="text-sm text-slate-400 mt-1">상단에서 다른 달을 선택하거나 관찰을 기록하세요.</p>
+                                </div>
+                            )}
                         </div>
                     </div>
                 )}

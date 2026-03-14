@@ -395,9 +395,9 @@ export default function Monitor() {
                     </div>
                 )}
 
-                {/* 최근 기록 */}
+                {/* 누가 기록 */}
                 <div className="mt-8 max-w-4xl mx-auto">
-                    <h2 className="text-lg font-semibold text-slate-700 mb-4">최근 기록</h2>
+                    <h2 className="text-lg font-semibold text-slate-700 mb-4">누가 기록</h2>
                     <div className="space-y-2">
                         {recentLogs?.slice(0, 15).map((log) => (
                             <div
